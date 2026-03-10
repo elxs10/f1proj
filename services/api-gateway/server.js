@@ -5,6 +5,8 @@ import driversRouter from './routes/drivers.js';
 import telemetryRouter from './routes/telemetry.js';
 import standingsRouter from './routes/standings.js';
 import calendarRouter from './routes/calendar.js';
+import historyRouter from './routes/history.js';
+import trackRoutrer from './routes/track.js';
 
 
 const PORT = process.env.PORT || 3000;
@@ -35,6 +37,8 @@ app.use('/api/drivers', driversRouter);
 app.use('/api/telemetry', telemetryRouter);
 app.use('/api/standings', standingsRouter);
 app.use('/api/calendar', calendarRouter);
+app.use('/api/history', historyRouter);
+app.use('/api/track', trackRoutrer);
 
 
 
