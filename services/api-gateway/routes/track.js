@@ -35,8 +35,16 @@ router.get('/', async (req, res) => {
         );
 
         const trackOutline = validPoints
-            .filter((_, i) => i % 20 === 0)
+            .filter((_, i) => i % 5 === 0)
             .map(p => ({ x: p.x, y: p.y, z: p.z }));
+
+        // Split into 3 sectors (equal thirds)
+        const total = trackOutline.length;
+        const s1End = Math.floor(total * 0.33);
+        const s2End = Math.floor(total * 0.66);
+        const sector1 = trackOutline.slice(0, s1End + 1);
+        const sector2 = trackOutline.slice(s1End, s2End + 1);
+        const sector3 = trackOutline.slice(s2End);
 
         const data = {
             session,
@@ -52,6 +60,7 @@ router.get('/', async (req, res) => {
                 dateEnd: sessionInfo.date_end,
             },
             trackOutline,
+            sectors: { sector1, sector2, sector3 },
             totalPoints: trackOutline.length,
         };
 
