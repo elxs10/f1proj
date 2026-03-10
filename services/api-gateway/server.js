@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import driversRouter from './routes/drivers.js';
+import telemetryRouter from './routes/telemetry.js';
+import standingsRouter from './routes/standings.js';
 
 
 const PORT = process.env.PORT || 3000;
@@ -29,6 +31,8 @@ app.get('/ready', (req, res) => {
 );
 
 app.use('/api/drivers', driversRouter);
+app.use('/api/telemetry', telemetryRouter);
+app.use('/api/standings', standingsRouter);
 
 
 
