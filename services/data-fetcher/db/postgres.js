@@ -2,11 +2,11 @@ import pg from 'pg';
 const { Pool } = pg;
 
 const pool = new Pool({
-    host: 'localhost',
+    host: process.env.POSTGRES_HOST || 'localhost',
     port: 5432,
-    database: 'f1_app',
-    user: 'kunju',
-    password: '',
+    database: process.env.POSTGRES_DB || 'f1_app',
+    user: process.env.POSTGRES_USER || 'kunju',
+    password: process.env.POSTGRES_PASSWORD || '',
 
 });
 

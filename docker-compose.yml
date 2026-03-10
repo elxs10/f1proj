@@ -1,0 +1,56 @@
+services:
+  
+  redis:
+    image : redis:7-alpine
+    container_name: f1_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: f1_postgres
+    environment:
+      POSTGRES_USER: kunju
+      POSTGRES_PASSWORD: f1_password
+      POSTGRES_DB: f1_app
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+
+  data-fetcher:
+    build: ./services/data-fetcher
+    container_name: f1_data_fetcher
+    environment:
+      - REDIS_HOST=redis
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=kunju
+      - POSTGRES_PASSWORD=f1_password
+      - POSTGRES_DB=f1_app
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+  api-gateway:
+    build: ./services/api-gateway
+    container_name: f1_api_gateway
+    environment:
+      - REDIS_HOST=redis
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=kunju
+      - POSTGRES_PASSWORD=f1_password
+      - POSTGRES_DB=f1_app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+
+
+volumes:
+  postgres_data:
