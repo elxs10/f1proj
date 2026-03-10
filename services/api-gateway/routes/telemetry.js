@@ -1,9 +1,9 @@
 import express from 'express';
 import axios from 'axios';
+import redis from '../db/redis.js';
 
 const router = express.Router();
 const OPENF1_BASE = 'https://api.openf1.org/v1';
-
 
 router.get('/', async (req, res) => {
     try {
@@ -16,6 +16,14 @@ router.get('/', async (req, res) => {
             });
         }
 
+        const cacheKey = `telemetry:${driverNumber}`;
+
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+            console.log(`[Telemetry] ✅ Cache hit for driver #${driverNumber}`);
+            return res.status(200).json(JSON.parse(cached));
+        }
+        console.log(`[Telemetry] ⚠️ Cache miss — fetching from OpenF1`);
         const response = await axios.get(
             `${OPENF1_BASE}/car_data?driver_number=${driverNumber}&session_key=${session}`
         );
@@ -29,8 +37,7 @@ router.get('/', async (req, res) => {
         const movingData = response.data.filter(p => Number(p.speed) > 0);
         const latest = movingData[movingData.length - 1];
 
-
-        res.status(200).json({
+        const data = {
             session,
             driverNumber: Number(driverNumber),
             totalPoints: response.data.length,
@@ -43,7 +50,6 @@ router.get('/', async (req, res) => {
                 drs: latest.drs === 1 ? 'open' : 'closed',
                 time: latest.date,
             },
-
             chartData: movingData.slice(-50).map(p => ({
                 speed: Number(p.speed),
                 rpm: Number(p.rpm),
@@ -51,9 +57,16 @@ router.get('/', async (req, res) => {
                 throttle: Number(p.throttle),
                 time: p.date,
             }))
-        });
+        };
+        await redis.set(cacheKey, JSON.stringify(data), 'EX', 30);
+
+        return res.status(200).json(data);
 
     } catch (err) {
+        if (err.response?.status === 429) {
+            return res.status(429).json({ error: 'Rate limited', retryAfter: 60 });
+        }
+        console.error('[Telemetry] ❌ Error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });

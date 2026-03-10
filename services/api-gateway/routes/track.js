@@ -1,14 +1,24 @@
 import express from 'express';
 import axios from 'axios';
+import redis from '../db/redis.js';
 
 const router = express.Router();
 const OPENF1_BASE = 'https://api.openf1.org/v1';
 
-// GET /api/track?session=9693
 router.get('/', async (req, res) => {
     try {
         const session = req.query.session || 'latest';
+        const cacheKey = `track:${session}`;
 
+        // Step 1 — Check Redis
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+            console.log(`[Track] ✅ Cache hit for session ${session}`);
+            return res.status(200).json(JSON.parse(cached));
+        }
+
+        // Step 2 — Hit OpenF1 directly
+        console.log(`[Track] ⚠️ Cache miss — fetching from OpenF1`);
         const [sessionRes, locationRes] = await Promise.all([
             axios.get(`${OPENF1_BASE}/sessions?session_key=${session}`),
             axios.get(`${OPENF1_BASE}/location?session_key=${session}&driver_number=1`),
@@ -20,21 +30,15 @@ router.get('/', async (req, res) => {
 
         const sessionInfo = sessionRes.data[0];
 
-        // Filter out 0,0,0 points — car not moving yet
         const validPoints = locationRes.data.filter(
             p => p.x !== 0 && p.y !== 0
         );
 
-        // Take every 20th point — enough to draw track shape
         const trackOutline = validPoints
             .filter((_, i) => i % 20 === 0)
-            .map(p => ({
-                x: p.x,
-                y: p.y,
-                z: p.z,
-            }));
+            .map(p => ({ x: p.x, y: p.y, z: p.z }));
 
-        res.status(200).json({
+        const data = {
             session,
             track: {
                 name: sessionInfo.circuit_short_name,
@@ -49,15 +53,18 @@ router.get('/', async (req, res) => {
             },
             trackOutline,
             totalPoints: trackOutline.length,
-        });
+        };
+
+        // Save to Redis — 7 days (circuit never changes)
+        await redis.set(cacheKey, JSON.stringify(data), 'EX', 604800);
+
+        return res.status(200).json(data);
 
     } catch (err) {
         if (err.response?.status === 429) {
-            return res.status(429).json({
-                error: 'OpenF1 rate limit hit — please wait 60 seconds',
-                retryAfter: 60
-            });
+            return res.status(429).json({ error: 'Rate limited', retryAfter: 60 });
         }
+        console.error('[Track] ❌ Error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });

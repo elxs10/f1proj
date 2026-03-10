@@ -1,61 +1,109 @@
 import axios from 'axios';
+import redis from './db/redis.js';
+import pool from './db/postgres.js';
 
 const BASE_URL = 'https://api.openf1.org/v1';
-const SESSION = '9158'; // Monaco 2024 Qualifying — swap to 'latest' on race day
+const SESSION = '9158';
+const POLL_INTERVAL = 30000;
 
-async function fetchDrivers() {
-    const response = await axios.get(`${BASE_URL}/drivers?session_key=${SESSION}`);
-    return response.data;
+async function fetchAndSaveDrivers() {
+    console.log('[Fetcher] Fetching drivers...');
+
+    const response = await axios.get(
+        `${BASE_URL}/drivers?session_key=${SESSION}`
+    );
+    const drivers = response.data;
+
+    if (!drivers || drivers.length === 0) {
+        console.warn('[Fetcher] No drivers found');
+        return [];
+    }
+
+    await redis.set(
+        `drivers:${SESSION}`,
+        JSON.stringify(drivers),
+        'EX', 60
+    );
+
+    for (const d of drivers) {
+        await pool.query(
+            `INSERT INTO drivers 
+        (session_key, driver_number, code, full_name, team_name, team_colour, headshot_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (session_key, driver_number) DO UPDATE SET
+        team_name   = EXCLUDED.team_name,
+        team_colour = EXCLUDED.team_colour`,
+            [SESSION, d.driver_number, d.name_acronym, d.full_name,
+                d.team_name, d.team_colour, d.headshot_url]
+        );
+    }
+
+
+    console.log(`[Fetcher] ✅ Saved ${drivers.length} drivers`);
+    return drivers;
 }
 
-async function fetchCarData(driverNumber) {
+
+
+
+async function fetchAndSaveTelemetry(driverNumber) {
     const response = await axios.get(
         `${BASE_URL}/car_data?driver_number=${driverNumber}&session_key=${SESSION}`
     );
-    return response.data;
+    const carData = response.data;
+
+    if (!carData || carData.length === 0) return;
+
+
+    const latest = carData.find(p => Number(p.speed) > 100);
+    if (!latest) return;
+
+    const telemetry = {
+        driver_number: driverNumber,
+        speed: Number(latest.speed),
+        rpm: Number(latest.rpm),
+        gear: Number(latest.n_gear),
+        throttle: Number(latest.throttle),
+        brake: latest.brake,
+        drs: latest.drs === 1 ? 'OPEN' : 'CLOSED',
+        time: latest.date,
+        chartData: carData.slice(-50).map(p => ({
+            speed: Number(p.speed),
+            rpm: Number(p.rpm),
+            throttle: Number(p.throttle),
+            time: p.date
+        }))
+    };
+
+    await redis.set(
+        `telemetry:${driverNumber}`,
+        JSON.stringify(telemetry),
+        'EX', 30
+    );
+
+    console.log(`[Fetcher] ✅ Telemetry saved for #${driverNumber}`);
 }
 
 async function main() {
-    console.log('[Fetcher] Starting...');
+    console.log('[Fetcher] Starting poll cycle...');
 
-    const drivers = await fetchDrivers();
+    try {
+        const drivers = await fetchAndSaveDrivers();
 
-    if (!drivers || drivers.length === 0) {
-        console.warn('[Fetcher] No drivers found — no live session right now');
-        return;
+        if (drivers.length > 0) {
+            await Promise.all(
+                drivers.map(d => fetchAndSaveTelemetry(d.driver_number))
+            );
+        }
+
+        console.log('[Fetcher] ✅ Poll cycle complete');
+    } catch (err) {
+        if (err.response?.status === 429) {
+            console.warn('[Fetcher] ⚠️ Rate limited by OpenF1 — skipping cycle');
+        } else {
+            console.error('[Fetcher] ❌ Error:', err.message);
+        }
     }
-
-    console.log(`[Fetcher] Found ${drivers.length} drivers in session ${SESSION}`);
-    console.log('[Fetcher] Drivers:');
-    drivers.forEach(d => {
-        console.log(`  #${d.driver_number}  ${d.full_name}  —  ${d.team_name}`);
-    });
-
-    // Fetch car data for Verstappen (#1)
-    const driverNumber = drivers[0].driver_number;
-    console.log(`\n[Fetcher] Fetching car data for #${driverNumber} ${drivers[0].full_name}...`);
-
-    const carData = await fetchCarData(driverNumber);
-
-    if (!carData || carData.length === 0) {
-        console.warn('[Fetcher] No car data available');
-        return;
-    }
-
-    const latest = carData.find(point => Number(point.speed) > 100);
-
-    console.log(`[Fetcher] Got ${carData.length} data points`);
-    console.log('─────────────────────────────────');
-    console.log(`Driver  : ${drivers[0].full_name}`);
-    console.log(`Team    : ${drivers[0].team_name}`);
-    console.log(`Speed   : ${Number(latest.speed)} km/h`);
-    console.log(`RPM     : ${Number(latest.rpm)}`);
-    console.log(`Gear    : ${Number(latest.n_gear)}`);
-    console.log(`Throttle: ${Number(latest.throttle)}%`);
-    console.log(`Brake   : ${latest.brake}`);
-    console.log(`DRS     : ${latest.drs === 1 ? 'OPEN' : 'CLOSED'}`);
-    console.log(`Time    : ${latest.date}`);
-    console.log('─────────────────────────────────');
 }
-
 main();
+setInterval(main, POLL_INTERVAL);
