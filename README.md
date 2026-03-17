@@ -187,6 +187,4 @@ All F1 data is sourced from [OpenF1](https://openf1.org) — an open, free Formu
 
 ---
 
-## 📄 License
 
-MIT
